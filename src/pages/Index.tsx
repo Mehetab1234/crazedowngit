@@ -21,10 +21,10 @@ const Index = () => {
   const [repoUrl, setRepoUrl] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState('');
+  const [customBranch, setCustomBranch] = useState('');
   const [token, setToken] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -46,128 +46,65 @@ const Index = () => {
     return null;
   };
 
-  const fetchBranches = async (owner: string, repo: string, token?: string) => {
-    try {
-      // Use a CORS proxy for API calls
-      const proxyUrl = 'https://api.allorigins.win/raw?url=';
-      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/branches`;
-      
-      const headers: HeadersInit = {
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'GitHub-Repo-Downloader'
-      };
-
-      if (token) {
-        headers['Authorization'] = `token ${token}`;
-      }
-
-      const response = await fetch(proxyUrl + encodeURIComponent(apiUrl), {
-        headers
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch branches: ${response.status}`);
-      }
-
-      const branchesData = await response.json();
-      return branchesData;
-    } catch (err) {
-      console.error('Error fetching branches:', err);
-      // Fallback: provide common branch names if API fails
-      return [
-        { name: 'main', commit: { sha: 'unknown' } },
-        { name: 'master', commit: { sha: 'unknown' } },
-        { name: 'develop', commit: { sha: 'unknown' } }
+  // Set default common branches when repo URL is entered
+  useEffect(() => {
+    if (repoUrl && validateGitHubUrl(repoUrl)) {
+      const commonBranches = [
+        { name: 'main', commit: { sha: 'main' } },
+        { name: 'master', commit: { sha: 'master' } },
+        { name: 'develop', commit: { sha: 'develop' } },
+        { name: 'dev', commit: { sha: 'dev' } }
       ];
-    }
-  };
-
-  const loadBranches = async () => {
-    if (!repoUrl || !validateGitHubUrl(repoUrl)) {
-      return;
-    }
-
-    const repoInfo = extractRepoInfo(repoUrl);
-    if (!repoInfo) {
-      return;
-    }
-
-    setIsLoadingBranches(true);
-    setError('');
-
-    try {
-      console.log('Fetching branches...');
-      const branchesData = await fetchBranches(repoInfo.owner, repoInfo.repo, isPrivate ? token : undefined);
-      setBranches(branchesData);
-      
-      // Set default branch (usually 'main' or 'master')
-      const defaultBranch = branchesData.find((b: Branch) => b.name === 'main') || 
-                           branchesData.find((b: Branch) => b.name === 'master') || 
-                           branchesData[0];
-      
-      if (defaultBranch) {
-        setSelectedBranch(defaultBranch.name);
-      }
-    } catch (err) {
-      console.error('Failed to fetch branches:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch branches';
-      setError(errorMessage);
+      setBranches(commonBranches);
+      setSelectedBranch('main');
+      setError('');
+    } else {
       setBranches([]);
       setSelectedBranch('');
-    } finally {
-      setIsLoadingBranches(false);
     }
-  };
-
-  // Auto-load branches when repo URL changes
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (repoUrl && validateGitHubUrl(repoUrl)) {
-        loadBranches();
-      } else {
-        setBranches([]);
-        setSelectedBranch('');
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [repoUrl, isPrivate, token]);
+  }, [repoUrl]);
 
   const downloadRepository = async (owner: string, repo: string, branch: string) => {
+    console.log(`Starting download: ${owner}/${repo} on branch ${branch}`);
+    
+    // Direct GitHub download URL
+    const downloadUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
+    
     try {
-      // Direct download URL for GitHub repositories
-      const downloadUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
-      
-      console.log(`Downloading from: ${downloadUrl}`);
-      
-      // Create a temporary link element to trigger download
+      // Create a download link and trigger it
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.download = `${repo}-${branch}.zip`;
       link.target = '_blank';
       
-      // Append to body, click, and remove
+      // Add to DOM temporarily
       document.body.appendChild(link);
+      
+      // Trigger download
       link.click();
+      
+      // Clean up
       document.body.removeChild(link);
+      
+      console.log(`Download triggered for: ${downloadUrl}`);
       
       // Simulate progress for user feedback
       let progress = 0;
       const progressInterval = setInterval(() => {
-        progress += 10;
+        progress += 15;
         setDownloadProgress(progress);
         
         if (progress >= 100) {
           clearInterval(progressInterval);
         }
-      }, 200);
+      }, 150);
       
-      // Wait for simulated progress to complete
-      await new Promise(resolve => setTimeout(resolve, 2200));
+      // Wait for progress completion
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
     } catch (err) {
       console.error('Download error:', err);
-      throw err;
+      throw new Error('Failed to initiate download');
     }
   };
 
@@ -186,8 +123,9 @@ const Index = () => {
       return;
     }
 
-    if (!selectedBranch) {
-      setError('Please select a branch to download');
+    const finalBranch = customBranch || selectedBranch;
+    if (!finalBranch) {
+      setError('Please select a branch or enter a custom branch name');
       return;
     }
 
@@ -200,11 +138,11 @@ const Index = () => {
     setIsDownloading(true);
 
     try {
-      console.log(`Starting download of ${repoInfo.owner}/${repoInfo.repo} (${selectedBranch} branch)...`);
+      console.log(`Downloading ${repoInfo.owner}/${repoInfo.repo} (${finalBranch} branch)...`);
       
-      await downloadRepository(repoInfo.owner, repoInfo.repo, selectedBranch);
+      await downloadRepository(repoInfo.owner, repoInfo.repo, finalBranch);
 
-      setSuccess(`Successfully initiated download of ${repoInfo.repo} (${selectedBranch} branch)`);
+      setSuccess(`Download initiated for ${repoInfo.repo} (${finalBranch} branch). Check your downloads folder.`);
       toast({
         title: "Download Started",
         description: `${repoInfo.repo} download has been initiated`,
@@ -212,8 +150,8 @@ const Index = () => {
 
     } catch (err) {
       console.error('Download failed:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
-      setError(`Download failed: ${errorMessage}`);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to download repository';
+      setError(`Download failed: ${errorMessage}. Try checking if the repository and branch exist.`);
       toast({
         title: "Download Failed",
         description: errorMessage,
@@ -289,34 +227,44 @@ const Index = () => {
             )}
 
             {branches.length > 0 && (
-              <div className="space-y-2">
-                <Label htmlFor="branch" className="text-white flex items-center gap-2">
-                  <GitBranch className="h-4 w-4" />
-                  Branch
-                </Label>
-                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                  <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
-                    <SelectValue placeholder="Select a branch" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-700 border-slate-600">
-                    {branches.map((branch) => (
-                      <SelectItem 
-                        key={branch.name} 
-                        value={branch.name}
-                        className="text-white hover:bg-slate-600"
-                      >
-                        {branch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="branch" className="text-white flex items-center gap-2">
+                    <GitBranch className="h-4 w-4" />
+                    Select Common Branch
+                  </Label>
+                  <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                    <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                      <SelectValue placeholder="Select a common branch" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-700 border-slate-600">
+                      {branches.map((branch) => (
+                        <SelectItem 
+                          key={branch.name} 
+                          value={branch.name}
+                          className="text-white hover:bg-slate-600"
+                        >
+                          {branch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {isLoadingBranches && (
-              <div className="flex items-center space-x-2 text-slate-400">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
-                <span>Loading branches...</span>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-branch" className="text-white">Or Enter Custom Branch Name</Label>
+                  <Input
+                    id="custom-branch"
+                    type="text"
+                    placeholder="e.g., feature/new-feature, v1.0.0"
+                    value={customBranch}
+                    onChange={(e) => setCustomBranch(e.target.value)}
+                    className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
+                  />
+                  <p className="text-xs text-slate-400">
+                    This will override the selected branch above
+                  </p>
+                </div>
               </div>
             )}
 
@@ -337,7 +285,7 @@ const Index = () => {
             {isDownloading && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-slate-400">
-                  <span>Downloading...</span>
+                  <span>Initiating download...</span>
                   <span>{downloadProgress}%</span>
                 </div>
                 <Progress value={downloadProgress} className="bg-slate-700" />
@@ -346,7 +294,7 @@ const Index = () => {
 
             <Button
               onClick={handleDownload}
-              disabled={isDownloading || !selectedBranch}
+              disabled={isDownloading || (!selectedBranch && !customBranch)}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               {isDownloading ? (
@@ -363,12 +311,12 @@ const Index = () => {
             </Button>
 
             <div className="text-center text-sm text-slate-400">
-              <p>✅ Real GitHub repository downloads</p>
-              <p>✅ Automatic branch detection</p>
-              <p>✅ Supports public repositories</p>
+              <p>✅ Direct GitHub repository downloads</p>
+              <p>✅ Common branch detection</p>
+              <p>✅ Custom branch support</p>
               <p>✅ Downloads as ZIP file</p>
               <p className="text-xs mt-2 text-slate-500">
-                Note: Private repositories require cloning with Git and your access token
+                Note: If download doesn't start, the repository or branch may not exist
               </p>
             </div>
           </CardContent>
